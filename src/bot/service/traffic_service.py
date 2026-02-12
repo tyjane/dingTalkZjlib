@@ -32,7 +32,7 @@ class TrafficService:
         return flow_data
 
     def parse_daily_flow(self, data):
-        """解析当日与当周人流数据"""
+        """解析当日与当月人流数据"""
         if not data or not data.get("isSuccess"):
             logging.error("API返回数据异常或未成功")
             return None
@@ -46,11 +46,11 @@ class TrafficService:
             if org_location not in self.library_codes:
                 continue
 
-            # 查找当日/当周数据 (countType="日/周" 且 dateType=0表示进馆, 1表示出馆)
+            # 查找当日/当月数据 (countType="日/月" 且 dateType=0表示进馆, 1表示出馆)
             daily_in = 0
             daily_out = 0
-            weekly_in = 0
-            weekly_out = 0
+            monthly_in = 0
+            monthly_out = 0
 
             for count_data in library.get("fCount", []):
                 if count_data.get("countType") == "日":
@@ -58,20 +58,20 @@ class TrafficService:
                         daily_in = count_data.get("personCount", 0)
                     elif count_data.get("dateType") == 1:  # 出馆
                         daily_out = count_data.get("personCount", 0)
-                elif count_data.get("countType") == "周":
+                elif count_data.get("countType") == "月":
                     if count_data.get("dateType") == 0:  # 进馆
-                        weekly_in = count_data.get("personCount", 0)
+                        monthly_in = count_data.get("personCount", 0)
                     elif count_data.get("dateType") == 1:  # 出馆
-                        weekly_out = count_data.get("personCount", 0)
+                        monthly_out = count_data.get("personCount", 0)
 
             flow_summary[org_location] = {
                 "name": org_name,
                 "daily_in": daily_in,
                 "daily_out": daily_out,
                 "net_flow": daily_in - daily_out,
-                "weekly_in": weekly_in,
-                "weekly_out": weekly_out,
-                "weekly_net": weekly_in - weekly_out,
+                "monthly_in": monthly_in,
+                "monthly_out": monthly_out,
+                "monthly_net": monthly_in - monthly_out,
             }
 
         return flow_summary
@@ -152,8 +152,8 @@ class LibraryFlowMonitor:
     def format_output_for_dingtalk(
         self,
         flow_data,
-        include_weekly=False,
-        weekly_range_text=None,
+        include_monthly=False,
+        monthly_range_text=None,
         include_daily=True,
     ):
         """格式化输出为钉钉Markdown格式"""
@@ -161,8 +161,8 @@ class LibraryFlowMonitor:
             return "无法获取人流数据"
 
         output_lines = []
-        weekly_total_in = 0
-        weekly_total_out = 0
+        monthly_total_in = 0
+        monthly_total_out = 0
 
         if include_daily:
             from datetime import datetime
@@ -197,16 +197,16 @@ class LibraryFlowMonitor:
                 ]
             )
 
-        if include_weekly:
+        if include_monthly:
             for info in flow_data.values():
-                weekly_total_in += info.get("weekly_in", 0)
-                weekly_total_out += info.get("weekly_out", 0)
+                monthly_total_in += info.get("monthly_in", 0)
+                monthly_total_out += info.get("monthly_out", 0)
 
-            if weekly_range_text:
+            if monthly_range_text:
                 output_lines.extend(
                     [
                         "",
-                        f"#### 本周人流统计 ({weekly_range_text})",
+                        f"#### 本月人流统计 ({monthly_range_text})",
                         "---",
                     ]
                 )
@@ -214,7 +214,7 @@ class LibraryFlowMonitor:
                 output_lines.extend(
                     [
                         "",
-                        "#### 本周人流统计",
+                        "#### 本月人流统计",
                         "---",
                     ]
                 )
@@ -222,15 +222,15 @@ class LibraryFlowMonitor:
                 output_lines.extend(
                     [
                         f"**📍 {info['name']}**",
-                        f"- **本周进馆人次**: {info.get('weekly_in', 0):,}",
+                        f"- **本月进馆人次**: {info.get('monthly_in', 0):,}",
                         "",
                     ]
                 )
             output_lines.extend(
                 [
                     "---",
-                    "**📊 本周总计:**",
-                    f"- **本周总进馆人次**: {weekly_total_in:,}",
+                    "**📊 本月总计:**",
+                    f"- **本月总进馆人次**: {monthly_total_in:,}",
                 ]
             )
 
@@ -239,19 +239,19 @@ class LibraryFlowMonitor:
     def format_output(
         self,
         flow_data,
-        include_weekly=False,
-        weekly_range_text=None,
+        include_monthly=False,
+        monthly_range_text=None,
         include_daily=True,
     ):
         """控制台输出"""
         return self.format_output_for_dingtalk(
             flow_data,
-            include_weekly=include_weekly,
-            weekly_range_text=weekly_range_text,
+            include_monthly=include_monthly,
+            monthly_range_text=monthly_range_text,
             include_daily=include_daily,
         )
 
-    def get_daily_flow(self, include_weekly=False, weekly_range_text=None):
+    def get_daily_flow(self, include_monthly=False, monthly_range_text=None):
         """获取、解析、输出并推送到钉钉"""
         flow_data = self.service.fetch_and_parse_daily_flow()
         if not flow_data:
@@ -264,16 +264,16 @@ class LibraryFlowMonitor:
             from datetime import datetime
 
             title = f"浙图人流速报 {datetime.now().strftime('%Y-%m-%d')}"
-            if include_weekly:
+            if include_monthly:
                 daily_text = self.format_output_for_dingtalk(
                     flow_data,
-                    include_weekly=False,
+                    include_monthly=False,
                     include_daily=True,
                 )
                 weekly_text = self.format_output_for_dingtalk(
                     flow_data,
-                    include_weekly=True,
-                    weekly_range_text=weekly_range_text,
+                    include_monthly=True,
+                    monthly_range_text=monthly_range_text,
                     include_daily=False,
                 )
                 self.dingtalk_bot.send_markdown(
@@ -282,21 +282,21 @@ class LibraryFlowMonitor:
                 self.dingtalk_bot.send_markdown(
                     title=title, text=weekly_text, is_at_all=False
                 )
-                logging.info("成功推送到钉钉群（当日+本周）")
+                logging.info("成功推送到钉钉群（当日+本月）")
                 print(
                     "\n--- 推送到钉钉的消息预览（当日）---\n"
                     + daily_text
                     + "\n---------------------------\n"
                 )
                 print(
-                    "\n--- 推送到钉钉的消息预览（本周）---\n"
+                    "\n--- 推送到钉钉的消息预览（本月）---\n"
                     + weekly_text
                     + "\n---------------------------\n"
                 )
             else:
                 markdown_text = self.format_output_for_dingtalk(
                     flow_data,
-                    include_weekly=False,
+                    include_monthly=False,
                     include_daily=True,
                 )
                 self.dingtalk_bot.send_markdown(
@@ -312,20 +312,20 @@ class LibraryFlowMonitor:
         else:
             logging.warning("未配置钉钉机器人，跳过推送")
             # 如果没有机器人，则在控制台打印原始格式
-            if include_weekly:
+            if include_monthly:
                 print(
                     self.format_output(
                         flow_data,
-                        include_weekly=False,
-                        weekly_range_text=weekly_range_text,
+                        include_monthly=False,
+                        monthly_range_text=monthly_range_text,
                         include_daily=True,
                     )
                 )
                 print(
                     self.format_output(
                         flow_data,
-                        include_weekly=True,
-                        weekly_range_text=weekly_range_text,
+                        include_monthly=True,
+                        monthly_range_text=monthly_range_text,
                         include_daily=False,
                     )
                 )
@@ -333,8 +333,8 @@ class LibraryFlowMonitor:
                 print(
                     self.format_output(
                         flow_data,
-                        include_weekly=False,
-                        weekly_range_text=weekly_range_text,
+                        include_monthly=False,
+                        monthly_range_text=monthly_range_text,
                         include_daily=True,
                     )
                 )

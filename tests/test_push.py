@@ -45,12 +45,13 @@ def main():
     monitor = LibraryFlowMonitor(dingtalk_bot=chatbot, db=db)
 
     today = datetime.now()
-    week_start = today - timedelta(days=today.weekday())
-    week_end = week_start + timedelta(days=6)
-    weekly_range_text = (
-        f"{week_start.strftime('%Y-%m-%d')}至{week_end.strftime('%Y-%m-%d')}"
+    month_start = today.replace(day=1)
+    next_month = (month_start + timedelta(days=32)).replace(day=1)
+    month_end = next_month - timedelta(days=1)
+    monthly_range_text = (
+        f"{month_start.strftime('%Y-%m-%d')}至{month_end.strftime('%Y-%m-%d')}"
     )
-    monitor.get_daily_flow(include_weekly=True, weekly_range_text=weekly_range_text)
+    monitor.get_daily_flow(include_monthly=True, monthly_range_text=monthly_range_text)
     db.close()
 
 

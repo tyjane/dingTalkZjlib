@@ -57,22 +57,29 @@ def main():
 
     # --- 定时任务设置 ---
     # 每天指定时间执行
-    def run_daily():
-        if datetime.now().weekday() == 6:
-            return
-        monitor.get_daily_flow(include_weekly=False)
+    def _is_last_day_of_month(current):
+        return (current + timedelta(days=1)).month != current.month
 
-    def run_weekly():
+    def run_daily():
+        if _is_last_day_of_month(datetime.now()):
+            return
+        monitor.get_daily_flow(include_monthly=False)
+
+    def run_monthly():
         today = datetime.now()
-        week_start = today - timedelta(days=today.weekday())
-        week_end = week_start + timedelta(days=6)
-        weekly_range_text = (
-            f"{week_start.strftime('%Y-%m-%d')}至{week_end.strftime('%Y-%m-%d')}"
+        month_start = today.replace(day=1)
+        next_month = (month_start + timedelta(days=32)).replace(day=1)
+        month_end = next_month - timedelta(days=1)
+        monthly_range_text = (
+            f"{month_start.strftime('%Y-%m-%d')}至{month_end.strftime('%Y-%m-%d')}"
         )
-        monitor.get_daily_flow(include_weekly=True, weekly_range_text=weekly_range_text)
+        monitor.get_daily_flow(
+            include_monthly=True,
+            monthly_range_text=monthly_range_text,
+        )
 
     schedule.every().day.at("21:00").do(run_daily)
-    schedule.every().sunday.at("21:00").do(run_weekly)
+    schedule.every().day.at("21:00").do(run_monthly)
     # 你可以根据需要添加更多时间点
     # schedule.every().day.at("21:00").do(monitor.get_daily_flow)
 
