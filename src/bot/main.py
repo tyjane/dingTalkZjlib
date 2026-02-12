@@ -2,6 +2,7 @@ import argparse
 import logging
 import schedule
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from dingtalkchatbot.chatbot import DingtalkChatbot
@@ -68,13 +69,34 @@ def main():
     monitor = LibraryFlowMonitor(dingtalk_bot=chatbot, db=db)
 
     if args.test:
-        monitor.get_daily_flow()
+        today = datetime.now()
+        week_start = today - timedelta(days=today.weekday())
+        week_end = week_start + timedelta(days=6)
+        weekly_range_text = (
+            f"{week_start.strftime('%Y-%m-%d')}至{week_end.strftime('%Y-%m-%d')}"
+        )
+        monitor.get_daily_flow(include_weekly=True, weekly_range_text=weekly_range_text)
         db.close()
         return
 
     # --- 定时任务设置 ---
     # 每天指定时间执行
-    schedule.every().day.at("21:00").do(monitor.get_daily_flow)
+    def run_daily():
+        if datetime.now().weekday() == 6:
+            return
+        monitor.get_daily_flow(include_weekly=False)
+
+    def run_weekly():
+        today = datetime.now()
+        week_start = today - timedelta(days=today.weekday())
+        week_end = week_start + timedelta(days=6)
+        weekly_range_text = (
+            f"{week_start.strftime('%Y-%m-%d')}至{week_end.strftime('%Y-%m-%d')}"
+        )
+        monitor.get_daily_flow(include_weekly=True, weekly_range_text=weekly_range_text)
+
+    schedule.every().day.at("21:00").do(run_daily)
+    schedule.every().sunday.at("21:00").do(run_weekly)
     # 你可以根据需要添加更多时间点
     # schedule.every().day.at("21:00").do(monitor.get_daily_flow)
 
