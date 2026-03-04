@@ -46,7 +46,7 @@ class TrafficService:
             if org_location not in self.library_codes:
                 continue
 
-            # 查找当日数据 (countType="日" 且 dateType=0表示进馆, 1表示出馆)
+            # 查找当日数据：仅使用进馆，出馆固定为0
             daily_in = 0
             daily_out = 0
 
@@ -54,14 +54,11 @@ class TrafficService:
                 if count_data.get("countType") == "日":
                     if count_data.get("dateType") == 0:  # 进馆
                         daily_in = count_data.get("personCount", 0)
-                    elif count_data.get("dateType") == 1:  # 出馆
-                        daily_out = count_data.get("personCount", 0)
 
             flow_summary[org_location] = {
                 "name": org_name,
                 "daily_in": daily_in,
                 "daily_out": daily_out,
-                "net_flow": daily_in - daily_out,
             }
 
         return flow_summary
