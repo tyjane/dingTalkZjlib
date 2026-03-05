@@ -104,7 +104,7 @@ class LibraryFlowMonitor:
         headers = {
             "Content-Type": "application/json",
             "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " "AppleWebKit/537.36"
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
             ),
         }
 
@@ -128,37 +128,58 @@ class LibraryFlowMonitor:
             logging.warning("未配置钉钉机器人，输出到控制台: %s", title)
             print(f"\n[{title}]\n{markdown_text}\n")
 
-    def format_output_for_dingtalk(self, flow_data):
+    def _build_title(self, report_type, holiday_name=""):
+        if report_type == "daily":
+            return "浙图人流日报"
+        if report_type == "weekly":
+            return "浙图人流周报"
+        if report_type == "holiday":
+            return f"浙图人流节假日报（{holiday_name}）" if holiday_name else "浙图人流节假日报"
+        return "浙图人流播报"
+
+    def format_output_for_dingtalk(
+        self,
+        flow_data,
+        report_type,
+        start_date,
+        end_date,
+        holiday_name="",
+    ):
         if not flow_data:
             return "无法获取人流数据"
 
-        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        output_lines = [f"#### 浙江图书馆人流统计 ({current_time})", "---"]
+        title = self._build_title(report_type, holiday_name=holiday_name)
+        output_lines = [f"#### {title}"]
+
+        if report_type == "daily":
+            output_lines.append(f"- 统计日期：{end_date}")
+        else:
+            output_lines.append(f"- 统计区间：{start_date} ~ {end_date}")
+
+        output_lines.append("---")
 
         total_in = 0
         for info in flow_data.values():
             output_lines.extend(
                 [
                     f"**{info['name']}**",
-                    f"- **进馆人次**: {info['daily_in']:,}",
+                    f"- 进馆人次：{int(info['daily_in']):,}",
                     "",
                 ]
             )
             total_in += int(info["daily_in"])
 
-        output_lines.extend(["---", "**总计:**", f"- **总进馆人次**: {total_in:,}"])
+        output_lines.extend(["---", "**总计**", f"- 总进馆人次：{total_in:,}"])
         return "\n".join(output_lines)
 
-    def _build_title(self, report_type, start_date, end_date):
-        if report_type == "daily":
-            return f"浙图人流速报 {end_date}"
-        if report_type == "weekly":
-            return f"浙图人流周报 {start_date}~{end_date}"
-        if report_type == "holiday":
-            return f"浙图人流节假日报 {start_date}~{end_date}"
-        return f"浙图人流播报 {start_date}~{end_date}"
-
-    def _send_aggregated_report(self, report_type, start_date, end_date, force=False):
+    def _send_aggregated_report(
+        self,
+        report_type,
+        start_date,
+        end_date,
+        holiday_name="",
+        force=False,
+    ):
         if not self.db:
             logging.warning("数据库未初始化，跳过 %s 报告", report_type)
             return
@@ -172,8 +193,14 @@ class LibraryFlowMonitor:
             logging.warning("%s 区间无数据，跳过发送: %s ~ %s", report_type, start_date, end_date)
             return
 
-        title = self._build_title(report_type, start_date, end_date)
-        markdown_text = self.format_output_for_dingtalk(flow_data)
+        title = self._build_title(report_type, holiday_name=holiday_name)
+        markdown_text = self.format_output_for_dingtalk(
+            flow_data=flow_data,
+            report_type=report_type,
+            start_date=start_date,
+            end_date=end_date,
+            holiday_name=holiday_name,
+        )
         self._send_markdown(title=title, markdown_text=markdown_text)
 
         if self.dingtalk_bot:
@@ -228,8 +255,14 @@ class LibraryFlowMonitor:
         today_str = today.strftime("%Y-%m-%d")
         self.service.save_daily_flow(daily_flow, date_str=today_str)
 
-        daily_title = self._build_title("daily", today_str, today_str)
-        self._send_markdown(daily_title, self.format_output_for_dingtalk(daily_flow))
+        daily_title = self._build_title("daily")
+        daily_text = self.format_output_for_dingtalk(
+            flow_data=daily_flow,
+            report_type="daily",
+            start_date=today_str,
+            end_date=today_str,
+        )
+        self._send_markdown(daily_title, daily_text)
 
         if self._is_week_end(today):
             week_start, week_end = self._week_range(today)
@@ -244,6 +277,7 @@ class LibraryFlowMonitor:
                 report_type="holiday",
                 start_date=holiday["start_date"],
                 end_date=holiday["end_date"],
+                holiday_name=holiday.get("name", ""),
             )
 
         return daily_flow
