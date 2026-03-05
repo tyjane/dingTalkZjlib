@@ -1,3 +1,4 @@
+import logging
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -180,7 +181,7 @@ class Database:
                     SELECT
                         date,
                         'ALL',
-                        '总计',
+                        '??',
                         COALESCE(total_in, 0),
                         0,
                         COALESCE(created_at, datetime('now'))
@@ -196,7 +197,7 @@ class Database:
             SELECT
                 l.stat_date,
                 'ALL',
-                '总计',
+                '??',
                 COALESCE(SUM(l.in_count), 0),
                 0,
                 COALESCE(MAX(l.fetched_at), datetime('now'))
@@ -227,6 +228,7 @@ class Database:
         fetched_at = fetched_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         total_in = 0
+        location_rows = 0
 
         for org_location, info in flow_summary.items():
             area_code = (org_location or "").strip() or "UNKNOWN"
@@ -253,17 +255,24 @@ class Database:
                 """,
                 (date_str, area_code, area_name, in_count, out_count, fetched_at),
             )
+            location_rows += 1
 
         cursor.execute(
             """
             INSERT OR REPLACE INTO traffic_daily_summary
                 (stat_date, area_code, area_name, in_count, out_count, fetched_at)
-            VALUES (?, 'ALL', '总计', ?, 0, ?)
+            VALUES (?, 'ALL', '??', ?, 0, ?)
             """,
             (date_str, total_in, fetched_at),
         )
 
         self.conn.commit()
+        logging.info(
+            "DB write success action=insert_daily_flow date=%s locations=%s total_in=%s",
+            date_str,
+            location_rows,
+            total_in,
+        )
 
     def get_flow_between(self, start_date, end_date):
         cursor = self.conn.cursor()
@@ -281,6 +290,7 @@ class Database:
             (start_date, end_date),
         )
         rows = cursor.fetchall()
+
         flow_summary = {}
         for row in rows:
             flow_summary[row["area_code"]] = {
@@ -288,6 +298,13 @@ class Database:
                 "daily_in": int(row["in_total"]),
                 "daily_out": 0,
             }
+
+        logging.info(
+            "DB query success action=get_flow_between range=%s~%s locations=%s",
+            start_date,
+            end_date,
+            len(flow_summary),
+        )
         return flow_summary
 
     def has_report_sent(self, report_type, start_date, end_date):
@@ -301,7 +318,15 @@ class Database:
             """,
             (report_type, start_date, end_date),
         )
-        return cursor.fetchone() is not None
+        exists = cursor.fetchone() is not None
+        logging.info(
+            "DB dedupe check action=has_report_sent type=%s range=%s~%s exists=%s",
+            report_type,
+            start_date,
+            end_date,
+            exists,
+        )
+        return exists
 
     def mark_report_sent(self, report_type, start_date, end_date, sent_at=None):
         cursor = self.conn.cursor()
@@ -315,6 +340,12 @@ class Database:
             (report_type, start_date, end_date, sent_at),
         )
         self.conn.commit()
+        logging.info(
+            "DB write success action=mark_report_sent type=%s range=%s~%s",
+            report_type,
+            start_date,
+            end_date,
+        )
 
     def insert_daily_traffic(self, date_str, total_in):
         cursor = self.conn.cursor()
@@ -323,7 +354,7 @@ class Database:
             """
             INSERT OR REPLACE INTO traffic_daily_summary
                 (stat_date, area_code, area_name, in_count, out_count, fetched_at)
-            VALUES (?, 'ALL', '总计', ?, 0, ?)
+            VALUES (?, 'ALL', '??', ?, 0, ?)
             """,
             (date_str, int(total_in), fetched_at),
         )

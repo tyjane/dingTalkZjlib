@@ -2,6 +2,7 @@ import json
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
+from uuid import uuid4
 
 from src.bot.api.traffic_api import TrafficAPI
 
@@ -29,7 +30,8 @@ class TrafficService:
             logging.error("解析人流数据失败")
             return None
 
-        logging.info("人流数据获取完成")
+        total_in = sum(int(v.get("daily_in", 0)) for v in flow_data.values())
+        logging.info("人流数据获取完成，馆区数=%s，总进馆=%s", len(flow_data), total_in)
         return flow_data
 
     def parse_daily_flow(self, data):
@@ -59,6 +61,7 @@ class TrafficService:
 
     def save_daily_flow(self, flow_data, date_str=None):
         if not self.db or not flow_data:
+            logging.info("跳过写库：db或flow_data为空")
             return
 
         if date_str is None:
@@ -67,7 +70,7 @@ class TrafficService:
         try:
             self.db.insert_daily_flow(date_str, flow_data)
         except Exception as exc:
-            logging.error("保存人流数据失败: %s", exc)
+            logging.exception("保存人流数据失败: %s", exc)
 
 
 class LibraryFlowMonitor:
@@ -103,9 +106,7 @@ class LibraryFlowMonitor:
 
         headers = {
             "Content-Type": "application/json",
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-            ),
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         }
 
         api = TrafficAPI(
@@ -126,7 +127,7 @@ class LibraryFlowMonitor:
             logging.info("发送钉钉消息成功: %s", title)
         else:
             logging.warning("未配置钉钉机器人，输出到控制台: %s", title)
-            print(f"\n[{title}]\n{markdown_text}\n")
+            print(f"[{title}]\n{markdown_text}")
 
     def _build_title(self, report_type, holiday_name=""):
         if report_type == "daily":
@@ -134,7 +135,9 @@ class LibraryFlowMonitor:
         if report_type == "weekly":
             return "浙图人流周报"
         if report_type == "holiday":
-            return f"浙图人流节假日报（{holiday_name}）" if holiday_name else "浙图人流节假日报"
+            if holiday_name:
+                return f"浙图人流节假日报（{holiday_name}）"
+            return "浙图人流节假日报"
         return "浙图人流播报"
 
     def format_output_for_dingtalk(
@@ -181,16 +184,16 @@ class LibraryFlowMonitor:
         force=False,
     ):
         if not self.db:
-            logging.warning("数据库未初始化，跳过 %s 报告", report_type)
+            logging.warning("数据库未初始化，跳过%s报告", report_type)
             return
 
         if not force and self.db.has_report_sent(report_type, start_date, end_date):
-            logging.info("%s 报告已发送，跳过: %s ~ %s", report_type, start_date, end_date)
+            logging.info("去重命中，跳过%s: %s ~ %s", report_type, start_date, end_date)
             return
 
         flow_data = self.db.get_flow_between(start_date, end_date)
         if not flow_data:
-            logging.warning("%s 区间无数据，跳过发送: %s ~ %s", report_type, start_date, end_date)
+            logging.warning("%s区间无数据，跳过发送: %s ~ %s", report_type, start_date, end_date)
             return
 
         title = self._build_title(report_type, holiday_name=holiday_name)
@@ -216,12 +219,13 @@ class LibraryFlowMonitor:
 
     def _load_holiday_ranges(self):
         if not self.holiday_config_path.exists():
+            logging.info("节假日配置文件不存在: %s", self.holiday_config_path)
             return []
 
         try:
             payload = json.loads(self.holiday_config_path.read_text(encoding="utf-8"))
         except Exception as exc:
-            logging.error("读取节假日配置失败: %s", exc)
+            logging.exception("读取节假日配置失败: %s", exc)
             return []
 
         ranges = payload.get("ranges", []) if isinstance(payload, dict) else []
@@ -240,15 +244,24 @@ class LibraryFlowMonitor:
                     "name": item.get("name", ""),
                 }
             )
+
+        logging.info("节假日配置加载完成，条数=%s", len(valid))
         return valid
 
     def _holiday_ranges_ending_today(self, today):
         today_str = today.strftime("%Y-%m-%d")
-        return [x for x in self._load_holiday_ranges() if x.get("end_date") == today_str]
+        matched = [x for x in self._load_holiday_ranges() if x.get("end_date") == today_str]
+        if matched:
+            logging.info("命中节假日结束日，条数=%s", len(matched))
+        return matched
 
     def run_once(self):
+        run_id = uuid4().hex[:8]
+        logging.info("任务开始 run_id=%s", run_id)
+
         daily_flow = self.service.fetch_and_parse_daily_flow()
         if not daily_flow:
+            logging.error("任务失败 run_id=%s，日报数据为空", run_id)
             return None
 
         today = datetime.now().date()
@@ -266,13 +279,27 @@ class LibraryFlowMonitor:
 
         if self._is_week_end(today):
             week_start, week_end = self._week_range(today)
+            logging.info("触发周报 run_id=%s 区间=%s~%s", run_id, week_start, week_end)
             self._send_aggregated_report(
                 report_type="weekly",
                 start_date=week_start.strftime("%Y-%m-%d"),
                 end_date=week_end.strftime("%Y-%m-%d"),
             )
+        else:
+            logging.info("非周末日，周报跳过 run_id=%s", run_id)
 
-        for holiday in self._holiday_ranges_ending_today(today):
+        holidays = self._holiday_ranges_ending_today(today)
+        if not holidays:
+            logging.info("今日无节假日报 run_id=%s", run_id)
+
+        for holiday in holidays:
+            logging.info(
+                "触发节假日报 run_id=%s 名称=%s 区间=%s~%s",
+                run_id,
+                holiday.get("name", ""),
+                holiday["start_date"],
+                holiday["end_date"],
+            )
             self._send_aggregated_report(
                 report_type="holiday",
                 start_date=holiday["start_date"],
@@ -280,6 +307,7 @@ class LibraryFlowMonitor:
                 holiday_name=holiday.get("name", ""),
             )
 
+        logging.info("任务结束 run_id=%s", run_id)
         return daily_flow
 
     def get_daily_flow(self):

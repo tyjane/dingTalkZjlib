@@ -1,4 +1,5 @@
 import logging
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from dingtalkchatbot.chatbot import DingtalkChatbot
@@ -9,15 +10,31 @@ from src.bot.storage.database import Database
 
 LOG_DIR = Path("logs")
 LOG_DIR.mkdir(exist_ok=True)
+LOG_FILE = LOG_DIR / "library_flow.log"
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.FileHandler(LOG_DIR / "library_flow.log", encoding="utf-8"),
-        logging.StreamHandler(),
-    ],
-)
+
+def setup_logging():
+    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+
+    rotating_file_handler = RotatingFileHandler(
+        LOG_FILE,
+        maxBytes=10 * 1024 * 1024,
+        backupCount=10,
+        encoding="utf-8",
+    )
+    rotating_file_handler.setFormatter(formatter)
+
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(formatter)
+
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+    root_logger.handlers.clear()
+    root_logger.addHandler(rotating_file_handler)
+    root_logger.addHandler(stream_handler)
+
+
+setup_logging()
 
 
 def main():
@@ -29,12 +46,12 @@ def main():
 
     try:
         if "YOUR_REAL_WEBHOOK_URL" in webhook:
-            print("错误：请将 webhook 替换为真实钉钉机器人地址")
+            print("\u9519\u8bef\uff1a\u8bf7\u5c06 webhook \u66ff\u6362\u4e3a\u771f\u5b9e\u9489\u9489\u673a\u5668\u4eba\u5730\u5740")
             chatbot = None
         else:
             chatbot = DingtalkChatbot(webhook, secret=secret)
     except Exception as exc:
-        logging.error("初始化钉钉机器人失败: %s", exc)
+        logging.error("\u521d\u59cb\u5316\u9489\u9489\u673a\u5668\u4eba\u5931\u8d25: %s", exc)
         chatbot = None
 
     db = Database()
