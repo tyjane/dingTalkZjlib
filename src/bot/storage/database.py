@@ -67,6 +67,18 @@ class Database:
             """
         )
 
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS report_send_log (
+                report_type TEXT NOT NULL,
+                start_date TEXT NOT NULL,
+                end_date TEXT NOT NULL,
+                sent_at TEXT NOT NULL,
+                PRIMARY KEY (report_type, start_date, end_date)
+            )
+            """
+        )
+
         self._migrate_legacy_tables()
         self.conn.commit()
 
@@ -95,7 +107,6 @@ class Database:
     def _migrate_legacy_tables(self):
         cursor = self.conn.cursor()
 
-        # 1) Old compact entries table: traffic_daily_entries
         if self._table_exists("traffic_daily_entries"):
             cols = self._table_columns("traffic_daily_entries")
             if {"stat_date", "area", "in_count", "fetched_at"}.issubset(cols):
@@ -103,35 +114,20 @@ class Database:
                     """
                     INSERT OR IGNORE INTO traffic_raw_snapshots
                         (stat_date, area_code, area_name, in_count, out_count, fetched_at)
-                    SELECT
-                        stat_date,
-                        area,
-                        area,
-                        COALESCE(in_count, 0),
-                        0,
-                        fetched_at
+                    SELECT stat_date, area, area, COALESCE(in_count, 0), 0, fetched_at
                     FROM traffic_daily_entries
                     """
                 )
-
                 cursor.execute(
                     """
                     INSERT OR REPLACE INTO traffic_daily_by_location
                         (stat_date, area_code, area_name, in_count, out_count, fetched_at)
-                    SELECT
-                        stat_date,
-                        area,
-                        area,
-                        COALESCE(in_count, 0),
-                        0,
-                        fetched_at
+                    SELECT stat_date, area, area, COALESCE(in_count, 0), 0, fetched_at
                     FROM traffic_daily_entries
                     """
                 )
-
             self._rename_legacy_table("traffic_daily_entries")
 
-        # 2) Old location table: traffic_daily_locations
         if self._table_exists("traffic_daily_locations"):
             cols = self._table_columns("traffic_daily_locations")
             required = {
@@ -157,7 +153,6 @@ class Database:
                     FROM traffic_daily_locations
                     """
                 )
-
                 cursor.execute(
                     """
                     INSERT OR REPLACE INTO traffic_daily_by_location
@@ -172,10 +167,8 @@ class Database:
                     FROM traffic_daily_locations
                     """
                 )
-
             self._rename_legacy_table("traffic_daily_locations")
 
-        # 3) Old totals table: traffic_daily_totals
         if self._table_exists("traffic_daily_totals"):
             cols = self._table_columns("traffic_daily_totals")
             required = {"date", "total_in", "total_out", "created_at"}
@@ -194,10 +187,8 @@ class Database:
                     FROM traffic_daily_totals
                     """
                 )
-
             self._rename_legacy_table("traffic_daily_totals")
 
-        # Fill missing summary dates from daily_by_location.
         cursor.execute(
             """
             INSERT INTO traffic_daily_summary
@@ -236,7 +227,6 @@ class Database:
         fetched_at = fetched_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         total_in = 0
-        total_out = 0
 
         for org_location, info in flow_summary.items():
             area_code = (org_location or "").strip() or "UNKNOWN"
@@ -245,7 +235,6 @@ class Database:
             out_count = 0
 
             total_in += in_count
-            total_out += out_count
 
             cursor.execute(
                 """
@@ -269,11 +258,62 @@ class Database:
             """
             INSERT OR REPLACE INTO traffic_daily_summary
                 (stat_date, area_code, area_name, in_count, out_count, fetched_at)
-            VALUES (?, 'ALL', '总计', ?, ?, ?)
+            VALUES (?, 'ALL', '总计', ?, 0, ?)
             """,
-            (date_str, total_in, total_out, fetched_at),
+            (date_str, total_in, fetched_at),
         )
 
+        self.conn.commit()
+
+    def get_flow_between(self, start_date, end_date):
+        cursor = self.conn.cursor()
+        cursor.execute(
+            """
+            SELECT
+                area_code,
+                area_name,
+                COALESCE(SUM(in_count), 0) AS in_total
+            FROM traffic_daily_by_location
+            WHERE stat_date >= ? AND stat_date <= ?
+            GROUP BY area_code, area_name
+            ORDER BY area_code
+            """,
+            (start_date, end_date),
+        )
+        rows = cursor.fetchall()
+        flow_summary = {}
+        for row in rows:
+            flow_summary[row["area_code"]] = {
+                "name": row["area_name"],
+                "daily_in": int(row["in_total"]),
+                "daily_out": 0,
+            }
+        return flow_summary
+
+    def has_report_sent(self, report_type, start_date, end_date):
+        cursor = self.conn.cursor()
+        cursor.execute(
+            """
+            SELECT 1
+            FROM report_send_log
+            WHERE report_type = ? AND start_date = ? AND end_date = ?
+            LIMIT 1
+            """,
+            (report_type, start_date, end_date),
+        )
+        return cursor.fetchone() is not None
+
+    def mark_report_sent(self, report_type, start_date, end_date, sent_at=None):
+        cursor = self.conn.cursor()
+        sent_at = sent_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        cursor.execute(
+            """
+            INSERT OR REPLACE INTO report_send_log
+                (report_type, start_date, end_date, sent_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (report_type, start_date, end_date, sent_at),
+        )
         self.conn.commit()
 
     def insert_daily_traffic(self, date_str, total_in):

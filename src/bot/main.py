@@ -29,7 +29,7 @@ def main():
 
     try:
         if "YOUR_REAL_WEBHOOK_URL" in webhook:
-            print("错误：请在代码中替换 'webhook' 为你的实际钉钉机器人 Webhook 地址。")
+            print("错误：请将 webhook 替换为真实钉钉机器人地址")
             chatbot = None
         else:
             chatbot = DingtalkChatbot(webhook, secret=secret)
@@ -41,7 +41,7 @@ def main():
     monitor = LibraryFlowMonitor(dingtalk_bot=chatbot, db=db)
 
     try:
-        monitor.get_daily_flow()
+        monitor.run_once()
     finally:
         db.close()
 
