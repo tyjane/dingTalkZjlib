@@ -85,12 +85,10 @@ class LibraryFlowMonitor:
         holiday_config_path=None,
     ):
         primary_url = primary_url or (
-            "https://pfs.zjlib.cn/zhejiangshengtsg/alvarainflow/"
-            "api/WwStatisticsLog/GetBigFlowByLocations"
+            "http://10.18.222.30:5001/alvarainflow/api/WwStatisticsLog/GetBigFlowByLocations"
         )
         backup_url = backup_url or (
-            "https://shujia.alva.com.cn/zhejiangshengtsg/alvarainflow/"
-            "api/WwStatisticsLog/GetBigFlowByLocations"
+            "https://shujia.alva.com.cn/zhejiangshengtsg/alvarainflow/api/WwStatisticsLog/GetBigFlowByLocations"
         )
 
         self.library_codes = library_codes or {
