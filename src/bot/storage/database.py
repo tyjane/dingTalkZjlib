@@ -285,7 +285,13 @@ class Database:
             FROM traffic_daily_by_location
             WHERE stat_date >= ? AND stat_date <= ?
             GROUP BY area_code, area_name
-            ORDER BY area_code
+            ORDER BY
+                CASE area_code
+                    WHEN 'CN-ZJLIB_ZJ' THEN 1
+                    WHEN 'CN-ZJLIB_BSGL' THEN 2
+                    WHEN 'CN-ZJLIB_BSL' THEN 3
+                    ELSE 4
+                END
             """,
             (start_date, end_date),
         )
