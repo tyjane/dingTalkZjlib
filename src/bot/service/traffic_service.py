@@ -61,7 +61,7 @@ class TrafficService:
 
     def save_daily_flow(self, flow_data, date_str=None):
         if not self.db or not flow_data:
-            logging.info("跳过写库：db或flow_data为空")
+            logging.info("跳过写库：db 或 flow_data 为空")
             return
 
         if date_str is None:
@@ -138,6 +138,27 @@ class LibraryFlowMonitor:
             return "浙图人流节假日报"
         return "浙图人流播报"
 
+    def _format_ratio(self, current_value, previous_value):
+        if previous_value == 0:
+            if current_value == 0:
+                return "0%"
+            return "新增"
+
+        ratio = (current_value - previous_value) / previous_value * 100
+        ratio_text = f"{ratio:+.1f}%"
+        if ratio_text.endswith(".0%"):
+            ratio_text = ratio_text.replace(".0%", "%")
+        return ratio_text
+
+    def _colorize_ratio(self, ratio_text):
+        if ratio_text == "新增":
+            return '<font color="red">环比新增</font>'
+        if ratio_text.startswith("+"):
+            return f'<font color="red">环比{ratio_text}</font>'
+        if ratio_text.startswith("-"):
+            return f'<font color="green">环比{ratio_text}</font>'
+        return f"环比{ratio_text}"
+
     def format_output_for_dingtalk(
         self,
         flow_data,
@@ -145,6 +166,7 @@ class LibraryFlowMonitor:
         start_date,
         end_date,
         holiday_name="",
+        comparison_flow_data=None,
     ):
         if not flow_data:
             return "无法获取人流数据"
@@ -160,17 +182,35 @@ class LibraryFlowMonitor:
         output_lines.append("---")
 
         total_in = 0
-        for info in flow_data.values():
+        comparison_total_in = 0
+        for area_code, info in flow_data.items():
+            current_in = int(info["daily_in"])
+            previous_in = 0
+            if comparison_flow_data is not None:
+                previous_in = int(comparison_flow_data.get(area_code, {}).get("daily_in", 0))
+                comparison_total_in += previous_in
+
             output_lines.extend(
                 [
                     f"**{info['name']}**",
-                    f"- 进馆人次：{int(info['daily_in']):,}",
-                    "",
                 ]
             )
-            total_in += int(info["daily_in"])
+            if report_type == "weekly" and comparison_flow_data is not None:
+                ratio_text = self._colorize_ratio(self._format_ratio(current_in, previous_in))
+                output_lines.append(f"- 进馆人次：{current_in:,}（{ratio_text}）")
+            else:
+                output_lines.append(f"- 进馆人次：{current_in:,}")
+            output_lines.append("")
+            total_in += current_in
 
-        output_lines.extend(["---", "**总计**", f"- 总进馆人次：{total_in:,}"])
+        output_lines.extend(["---", "**总计**"])
+        if report_type == "weekly" and comparison_flow_data is not None:
+            total_ratio_text = self._colorize_ratio(
+                self._format_ratio(total_in, comparison_total_in)
+            )
+            output_lines.append(f"- 总进馆人次：{total_in:,}（{total_ratio_text}）")
+        else:
+            output_lines.append(f"- 总进馆人次：{total_in:,}")
         return "\n".join(output_lines)
 
     def _send_aggregated_report(
@@ -194,6 +234,14 @@ class LibraryFlowMonitor:
             logging.warning("%s区间无数据，跳过发送: %s ~ %s", report_type, start_date, end_date)
             return
 
+        comparison_flow_data = None
+        if report_type == "weekly":
+            week_start = datetime.strptime(start_date, "%Y-%m-%d").date()
+            week_end = datetime.strptime(end_date, "%Y-%m-%d").date()
+            last_week_start = (week_start - timedelta(days=7)).strftime("%Y-%m-%d")
+            last_week_end = (week_end - timedelta(days=7)).strftime("%Y-%m-%d")
+            comparison_flow_data = self.db.get_flow_between(last_week_start, last_week_end)
+
         title = self._build_title(report_type, holiday_name=holiday_name)
         markdown_text = self.format_output_for_dingtalk(
             flow_data=flow_data,
@@ -201,6 +249,7 @@ class LibraryFlowMonitor:
             start_date=start_date,
             end_date=end_date,
             holiday_name=holiday_name,
+            comparison_flow_data=comparison_flow_data,
         )
         self._send_markdown(title=title, markdown_text=markdown_text)
 
